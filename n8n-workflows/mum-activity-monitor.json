@@ -1,0 +1,412 @@
+{
+  "name": "Mum Activity Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9,18 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule: 9 AM & 6 PM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "/home/graeme/check-mum-activity.sh",
+        "host": "100.83.146.108",
+        "user": "graeme",
+        "privateKey": "={{ $credentials.claudeSshKey }}"
+      },
+      "id": "ssh-run-script",
+      "name": "SSH: Run Monitoring Script",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "claude-ssh",
+          "name": "Claude SSH Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "script-output",
+              "name": "scriptOutput",
+              "value": "={{ $json.stdout }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-script-output",
+      "name": "Set: Script Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $credentials.anthropicApiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "jsonBody": "={{ JSON.stringify({\n  \"model\": \"claude-sonnet-4-5-20250929\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": `Here is the health monitoring report for mum at Lisarda. Provide a natural language interpretation focusing on:\\n1. Is everything normal or are there concerns?\\n2. What is her activity pattern today?\\n3. Any recommendations or actions needed?\\n\\nReport:\\n${$json.scriptOutput}`\n    }\n  ]\n}) }}",
+        "options": {}
+      },
+      "id": "claude-interpret",
+      "name": "Claude AI: Interpret Results",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "anthropic-api",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "claude-response",
+              "name": "interpretation",
+              "value": "={{ $json.content[0].text }}",
+              "type": "string"
+            },
+            {
+              "id": "raw-output",
+              "name": "rawOutput",
+              "value": "={{ $('Set: Script Output').item.json.scriptOutput }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "checkTime",
+              "value": "={{ $now.format('YYYY-MM-DD HH:mm:ss') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-interpretation",
+      "name": "Set: AI Interpretation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.interpretation.toLowerCase() }}",
+              "operation": "contains",
+              "value2": "warning"
+            },
+            {
+              "value1": "={{ $json.interpretation.toLowerCase() }}",
+              "operation": "contains",
+              "value2": "concern"
+            },
+            {
+              "value1": "={{ $json.interpretation.toLowerCase() }}",
+              "operation": "contains",
+              "value2": "unusual"
+            },
+            {
+              "value1": "={{ $json.interpretation.toLowerCase() }}",
+              "operation": "contains",
+              "value2": "alert"
+            },
+            {
+              "value1": "={{ $json.rawOutput }}",
+              "operation": "contains",
+              "value2": "✗ WARNING"
+            },
+            {
+              "value1": "={{ $json.rawOutput }}",
+              "operation": "contains",
+              "value2": "sensors offline"
+            }
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "id": "if-needs-alert",
+      "name": "IF: Needs Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log-entry",
+              "name": "logEntry",
+              "value": "={{ $json.checkTime }}: Normal activity - {{ $json.interpretation.substring(0, 100) }}...",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "log-normal",
+      "name": "Log: Normal Activity",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "filePath": "/home/graeme/logs/mum-activity-monitor.log",
+        "text": "={{ $json.logEntry }}\n",
+        "options": {}
+      },
+      "id": "write-log-normal",
+      "name": "Write to Log File",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1650, 200],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "alert-message",
+              "name": "alertMessage",
+              "value": "=⚠️ *Mum Activity Alert*\n\nTime: {{ $json.checkTime }}\n\n*AI Assessment:*\n{{ $json.interpretation }}\n\n*Raw Details:*\n```\n{{ $json.rawOutput.substring(0, 500) }}\n```",
+              "type": "string"
+            },
+            {
+              "id": "alert-subject",
+              "name": "alertSubject",
+              "value": "⚠️ Mum Activity Alert - {{ $json.checkTime }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-alert",
+      "name": "Prepare Alert Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1450, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $credentials.slackWebhookUrl }}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "jsonBody": "={{ JSON.stringify({\n  \"text\": $json.alertMessage,\n  \"username\": \"Mum Activity Monitor\",\n  \"icon_emoji\": \":warning:\"\n}) }}",
+        "options": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack: Send Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 350],
+      "credentials": {
+        "slackWebhookUrl": {
+          "id": "slack-webhook",
+          "name": "Slack Webhook"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "filePath": "/home/graeme/logs/mum-activity-alerts.log",
+        "text": "={{ $json.checkTime }}: ALERT - {{ $json.interpretation }}\n",
+        "options": {}
+      },
+      "id": "log-alert",
+      "name": "Log: Alert Sent",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1650, 450],
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "command": "/home/graeme/check-mum-activity.sh"
+      },
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 500],
+      "webhookId": "manual-check-mum"
+    }
+  ],
+  "connections": {
+    "Schedule: 9 AM & 6 PM": {
+      "main": [
+        [
+          {
+            "node": "SSH: Run Monitoring Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SSH: Run Monitoring Script": {
+      "main": [
+        [
+          {
+            "node": "Set: Script Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Script Output": {
+      "main": [
+        [
+          {
+            "node": "Claude AI: Interpret Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude AI: Interpret Results": {
+      "main": [
+        [
+          {
+            "node": "Set: AI Interpretation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: AI Interpretation": {
+      "main": [
+        [
+          {
+            "node": "IF: Needs Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: Needs Alert?": {
+      "main": [
+        [
+          {
+            "node": "Log: Normal Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Alert Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: Normal Activity": {
+      "main": [
+        [
+          {
+            "node": "Write to Log File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Alert Message": {
+      "main": [
+        [
+          {
+            "node": "Slack: Send Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log: Alert Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "SSH: Run Monitoring Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-12-09T18:00:00.000Z",
+  "versionId": "1"
+}
