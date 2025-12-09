@@ -1,0 +1,55 @@
+# SSH Keys and Credentials
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*_rsa*
+*credentials*
+*.secret
+
+# Home Assistant Configuration
+secrets.yaml
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Logs
+*.log
+logs/
+
+# OS Files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Editor
+.vscode/
+.idea/
+*.sublime-*
+
+# Temporary Files
+tmp/
+temp/
+*.tmp
+
+# Backup Files
+*.bak
+*.backup
+*~
+
+# Private Notes
+NOTES.md
+TODO.md
+.private/
